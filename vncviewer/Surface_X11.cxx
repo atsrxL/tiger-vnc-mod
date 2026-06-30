@@ -54,11 +54,87 @@ void Surface::draw(int src_x, int src_y, int dst_x, int dst_y,
   XRenderFreePicture(fl_display, winPict);
 }
 
+void Surface::drawScaled(int src_x, int src_y, int src_w, int src_h,
+                         int dst_x, int dst_y, int dst_w, int dst_h)
+{
+  XTransform transform;
+  Picture winPict;
+
+  if ((src_w == dst_w) && (src_h == dst_h)) {
+    draw(src_x, src_y, dst_x, dst_y, dst_w, dst_h);
+    return;
+  }
+
+  transform.matrix[0][0] = XDoubleToFixed((double)src_w / dst_w);
+  transform.matrix[0][1] = XDoubleToFixed(0.0);
+  transform.matrix[0][2] = XDoubleToFixed(src_x);
+  transform.matrix[1][0] = XDoubleToFixed(0.0);
+  transform.matrix[1][1] = XDoubleToFixed((double)src_h / dst_h);
+  transform.matrix[1][2] = XDoubleToFixed(src_y);
+  transform.matrix[2][0] = XDoubleToFixed(0.0);
+  transform.matrix[2][1] = XDoubleToFixed(0.0);
+  transform.matrix[2][2] = XDoubleToFixed(1.0);
+
+  XRenderSetPictureTransform(fl_display, picture, &transform);
+  winPict = XRenderCreatePicture(fl_display, fl_window, visFormat, 0, nullptr);
+  XRenderComposite(fl_display, PictOpSrc, picture, None, winPict,
+                   0, 0, 0, 0, dst_x, dst_y, dst_w, dst_h);
+  XRenderFreePicture(fl_display, winPict);
+
+  transform.matrix[0][0] = XDoubleToFixed(1.0);
+  transform.matrix[0][1] = XDoubleToFixed(0.0);
+  transform.matrix[0][2] = XDoubleToFixed(0.0);
+  transform.matrix[1][0] = XDoubleToFixed(0.0);
+  transform.matrix[1][1] = XDoubleToFixed(1.0);
+  transform.matrix[1][2] = XDoubleToFixed(0.0);
+  transform.matrix[2][0] = XDoubleToFixed(0.0);
+  transform.matrix[2][1] = XDoubleToFixed(0.0);
+  transform.matrix[2][2] = XDoubleToFixed(1.0);
+  XRenderSetPictureTransform(fl_display, picture, &transform);
+}
+
 void Surface::draw(Surface* dst, int src_x, int src_y,
                    int dst_x, int dst_y, int dst_w, int dst_h)
 {
   XRenderComposite(fl_display, PictOpSrc, picture, None, dst->picture,
                    src_x, src_y, 0, 0, dst_x, dst_y, dst_w, dst_h);
+}
+
+void Surface::drawScaled(Surface* dst, int src_x, int src_y,
+                         int src_w, int src_h,
+                         int dst_x, int dst_y, int dst_w, int dst_h)
+{
+  XTransform transform;
+
+  if ((src_w == dst_w) && (src_h == dst_h)) {
+    draw(dst, src_x, src_y, dst_x, dst_y, dst_w, dst_h);
+    return;
+  }
+
+  transform.matrix[0][0] = XDoubleToFixed((double)src_w / dst_w);
+  transform.matrix[0][1] = XDoubleToFixed(0.0);
+  transform.matrix[0][2] = XDoubleToFixed(src_x);
+  transform.matrix[1][0] = XDoubleToFixed(0.0);
+  transform.matrix[1][1] = XDoubleToFixed((double)src_h / dst_h);
+  transform.matrix[1][2] = XDoubleToFixed(src_y);
+  transform.matrix[2][0] = XDoubleToFixed(0.0);
+  transform.matrix[2][1] = XDoubleToFixed(0.0);
+  transform.matrix[2][2] = XDoubleToFixed(1.0);
+
+  XRenderSetPictureTransform(fl_display, picture, &transform);
+  XRenderComposite(fl_display, PictOpSrc, picture, None, dst->picture,
+                   0, 0, 0, 0, dst_x, dst_y, dst_w, dst_h);
+
+  transform.matrix[0][0] = XDoubleToFixed(1.0);
+  transform.matrix[0][1] = XDoubleToFixed(0.0);
+  transform.matrix[0][2] = XDoubleToFixed(0.0);
+  transform.matrix[1][0] = XDoubleToFixed(0.0);
+  transform.matrix[1][1] = XDoubleToFixed(1.0);
+  transform.matrix[1][2] = XDoubleToFixed(0.0);
+  transform.matrix[2][0] = XDoubleToFixed(0.0);
+  transform.matrix[2][1] = XDoubleToFixed(0.0);
+  transform.matrix[2][2] = XDoubleToFixed(1.0);
+  XRenderSetPictureTransform(fl_display, picture, &transform);
 }
 
 static Picture alpha_mask(int a)

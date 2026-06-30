@@ -362,7 +362,8 @@ void DesktopWindow::resizeFramebuffer(int new_w, int new_h)
 {
   bool maximized;
 
-  if ((new_w == viewport->w()) && (new_h == viewport->h()))
+  if ((new_w == viewport->framebufferWidth()) &&
+      (new_h == viewport->framebufferHeight()))
     return;
 
   maximized = false;
@@ -390,7 +391,8 @@ void DesktopWindow::resizeFramebuffer(int new_w, int new_h)
       size(new_w, new_h);
   }
 
-  viewport->size(new_w, new_h);
+  viewport->resizeFramebuffer(new_w, new_h);
+  updateViewportDisplaySize();
 
   repositionWidgets();
 }
@@ -422,16 +424,19 @@ void DesktopWindow::setCursorPos(const core::Point& pos)
     return;
   }
 #if defined(WIN32)
-  SetCursorPos(pos.x + x_root() + viewport->x(),
-               pos.y + y_root() + viewport->y());
+  core::Point local = viewport->remoteToLocal(pos);
+  SetCursorPos(local.x + x_root() + viewport->x(),
+               local.y + y_root() + viewport->y());
 #elif defined(__APPLE__)
+  core::Point local = viewport->remoteToLocal(pos);
   CGPoint new_pos;
-  new_pos.x = pos.x + x_root() + viewport->x();
-  new_pos.y = pos.y + y_root() + viewport->y();
+  new_pos.x = local.x + x_root() + viewport->x();
+  new_pos.y = local.y + y_root() + viewport->y();
   CGWarpMouseCursorPosition(new_pos);
 #else // Assume this is Xlib
-  x11_warp_pointer(pos.x + x_root() + viewport->x(),
-                   pos.y + y_root() + viewport->y());
+  core::Point local = viewport->remoteToLocal(pos);
+  x11_warp_pointer(local.x + x_root() + viewport->x(),
+                   local.y + y_root() + viewport->y());
 #endif
 }
 
@@ -681,6 +686,7 @@ void DesktopWindow::resize(int x, int y, int w, int h)
   Fl_Window::resize(x, y, w, h);
 
   if (resizing) {
+    updateViewportDisplaySize();
     remoteResize();
 
     repositionWidgets();
@@ -862,6 +868,8 @@ int DesktopWindow::handle(int event)
   switch (event) {
   case FL_FULLSCREEN:
     fullScreen.setParam(fullscreen_active());
+
+    updateViewportDisplaySize();
 
     // Update scroll bars
     repositionWidgets();
@@ -1089,6 +1097,9 @@ void DesktopWindow::fullscreen_on()
 
   if (!fullscreen_active())
     fullscreen();
+
+  updateViewportDisplaySize();
+  repositionWidgets();
 }
 
 bool DesktopWindow::hasFocus()
@@ -1293,6 +1304,8 @@ void DesktopWindow::remoteResize()
 
   if (!::remoteResize)
     return;
+  if (fullscreen_active() && fullScreenScaleToFit)
+    return;
   if (!cc->server.supportsSetDesktopSize)
     return;
 
@@ -1448,6 +1461,30 @@ void DesktopWindow::remoteResize()
   pendingRemoteResize = true;
   gettimeofday(&lastResize, nullptr);
   cc->writer()->writeSetDesktopSize(width, height, layout);
+}
+
+void DesktopWindow::updateViewportDisplaySize()
+{
+  int display_w, display_h;
+
+  display_w = viewport->framebufferWidth();
+  display_h = viewport->framebufferHeight();
+
+  if (fullscreen_active() && fullScreenScaleToFit) {
+    double scale_x, scale_y, scale;
+
+    scale_x = (double)w() / viewport->framebufferWidth();
+    scale_y = (double)h() / viewport->framebufferHeight();
+    scale = std::min(scale_x, scale_y);
+
+    display_w = (int)(viewport->framebufferWidth() * scale);
+    display_h = (int)(viewport->framebufferHeight() * scale);
+  }
+
+  if ((display_w != viewport->w()) || (display_h != viewport->h())) {
+    viewport->setDisplaySize(display_w, display_h);
+    damage(FL_DAMAGE_ALL);
+  }
 }
 
 

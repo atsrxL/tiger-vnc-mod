@@ -95,6 +95,7 @@ static const int FAKE_KEY_CODE = 0xffff;
 
 Viewport::Viewport(int w, int h, CConn* cc_)
   : Fl_Widget(0, 0, w, h), cc(cc_), frameBuffer(nullptr),
+    displayWidth(w), displayHeight(h),
     lastPointerPos(0, 0), lastButtonMask(0),
     keyboard(nullptr), shortcutBypass(false), shortcutActive(false),
     firstLEDState(true), pendingClientClipboard(false),
@@ -188,7 +189,61 @@ void Viewport::updateWindow()
   core::Rect r;
 
   r = frameBuffer->getDamage();
-  damage(FL_DAMAGE_USER1, r.tl.x + x(), r.tl.y + y(), r.width(), r.height());
+
+  if (r.is_empty())
+    return;
+
+  if ((displayWidth == frameBuffer->width()) &&
+      (displayHeight == frameBuffer->height())) {
+    damage(FL_DAMAGE_USER1, r.tl.x + x(), r.tl.y + y(),
+           r.width(), r.height());
+  } else {
+    damage(FL_DAMAGE_USER1, x(), y(), w(), h());
+  }
+}
+
+void Viewport::resizeFramebuffer(int w, int h)
+{
+  if ((w == frameBuffer->width()) && (h == frameBuffer->height()))
+    return;
+
+  vlog.debug("Resizing framebuffer from %dx%d to %dx%d",
+             frameBuffer->width(), frameBuffer->height(), w, h);
+
+  frameBuffer = new PlatformPixelBuffer(w, h);
+  assert(frameBuffer);
+  cc->setFramebuffer(frameBuffer);
+}
+
+void Viewport::setDisplaySize(int w, int h)
+{
+  if ((displayWidth == w) && (displayHeight == h))
+    return;
+
+  displayWidth = w;
+  displayHeight = h;
+  size(w, h);
+  damage(FL_DAMAGE_ALL);
+}
+
+int Viewport::framebufferWidth() const
+{
+  return frameBuffer->width();
+}
+
+int Viewport::framebufferHeight() const
+{
+  return frameBuffer->height();
+}
+
+core::Point Viewport::remoteToLocal(const core::Point& pos) const
+{
+  core::Point local;
+
+  local.x = pos.x * displayWidth / frameBuffer->width();
+  local.y = pos.y * displayHeight / frameBuffer->height();
+
+  return local;
 }
 
 static const char * dotcursor_xpm[] = {
@@ -392,34 +447,39 @@ void Viewport::draw(Surface* dst)
   if ((W == 0) || (H == 0))
     return;
 
-  frameBuffer->draw(dst, X - x(), Y - y(), X, Y, W, H);
+  if ((displayWidth == frameBuffer->width()) &&
+      (displayHeight == frameBuffer->height())) {
+    frameBuffer->draw(dst, X - x(), Y - y(), X, Y, W, H);
+  } else {
+    frameBuffer->drawScaled(dst, 0, 0,
+                            frameBuffer->width(), frameBuffer->height(),
+                            x(), y(), displayWidth, displayHeight);
+  }
 }
 
 
 void Viewport::draw()
 {
-  int X, Y, W, H;
-
   // Check what actually needs updating
+  int X, Y, W, H;
   fl_clip_box(x(), y(), w(), h(), X, Y, W, H);
   if ((W == 0) || (H == 0))
     return;
 
-  frameBuffer->draw(X - x(), Y - y(), X, Y, W, H);
+  if ((displayWidth == frameBuffer->width()) &&
+      (displayHeight == frameBuffer->height())) {
+    frameBuffer->draw(X - x(), Y - y(), X, Y, W, H);
+  } else {
+    frameBuffer->drawScaled(0, 0, frameBuffer->width(), frameBuffer->height(),
+                            x(), y(), displayWidth, displayHeight);
+  }
 }
 
 
 void Viewport::resize(int x, int y, int w, int h)
 {
-  if ((w != frameBuffer->width()) || (h != frameBuffer->height())) {
-    vlog.debug("Resizing framebuffer from %dx%d to %dx%d",
-               frameBuffer->width(), frameBuffer->height(), w, h);
-
-    frameBuffer = new PlatformPixelBuffer(w, h);
-    assert(frameBuffer);
-    cc->setFramebuffer(frameBuffer);
-  }
-
+  displayWidth = w;
+  displayHeight = h;
   Fl_Widget::resize(x, y, w, h);
 }
 
@@ -652,7 +712,7 @@ void Viewport::flushPendingClipboard()
 void Viewport::handlePointerEvent(const core::Point& pos,
                                   uint16_t buttonMask)
 {
-  filterPointerEvent(pos, buttonMask);
+  filterPointerEvent(localToRemote(pos), buttonMask);
 }
 
 
@@ -1068,4 +1128,23 @@ void Viewport::handleOptions(void *data)
 
   if (Fl::belowmouse() == self)
     self->showCursor();
+}
+
+core::Point Viewport::localToRemote(const core::Point& pos) const
+{
+  core::Point remote;
+
+  remote.x = pos.x * frameBuffer->width() / displayWidth;
+  remote.y = pos.y * frameBuffer->height() / displayHeight;
+
+  if (remote.x < 0)
+    remote.x = 0;
+  if (remote.y < 0)
+    remote.y = 0;
+  if (remote.x >= frameBuffer->width())
+    remote.x = frameBuffer->width() - 1;
+  if (remote.y >= frameBuffer->height())
+    remote.y = frameBuffer->height() - 1;
+
+  return remote;
 }

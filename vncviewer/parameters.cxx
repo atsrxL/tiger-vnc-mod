@@ -149,6 +149,11 @@ core::BoolParameter
   fullScreen("FullScreen",
              _("Enable full screen as specified by FullScreenMode"),
              false);
+core::BoolParameter
+  fullScreenScaleToFit("FullScreenScaleToFit",
+                       _("Scale the remote desktop up to fit the local "
+                         "monitor when in full-screen mode"),
+                       false);
 core::EnumParameter
   fullScreenMode("FullScreenMode",
                  core::format(
@@ -276,6 +281,7 @@ static core::VoidParameter* parameterArray[] = {
   &qualityLevel,
   /* Display */
   &fullScreen,
+  &fullScreenScaleToFit,
   &fullScreenMode,
   &fullScreenSelectedMonitors,
   /* Input */

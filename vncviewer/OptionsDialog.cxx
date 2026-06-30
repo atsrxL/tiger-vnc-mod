@@ -354,6 +354,7 @@ void OptionsDialog::loadOptions(void)
   }
 
   monitorArrangement->value(fullScreenSelectedMonitors.getMonitors());
+  fullScreenScaleCheckbox->value(fullScreenScaleToFit);
 
   handleFullScreenMode(selectedMonitorsButton, this);
 
@@ -511,6 +512,7 @@ void OptionsDialog::storeOptions(void)
   }
 
   fullScreenSelectedMonitors.setMonitors(monitorArrangement->value());
+  fullScreenScaleToFit.setParam(fullScreenScaleCheckbox->value());
 
   /* Misc. */
   shared.setParam(sharedCheckbox->value());
@@ -1227,6 +1229,12 @@ void OptionsDialog::createDisplayPage(int tx, int ty, int tw, int th)
   tx = orig_tx;
   ty += INNER_MARGIN;
   width = tw - OUTER_MARGIN * 2;
+
+  fullScreenScaleCheckbox = new Fl_Check_Button(LBLRIGHT(tx, ty,
+                                            CHECK_MIN_WIDTH,
+                                            CHECK_HEIGHT,
+                                            _("Scale full-screen sessions to fit")));
+  ty += CHECK_HEIGHT + INNER_MARGIN;
 
   group->end();
 }

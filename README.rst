@@ -15,6 +15,20 @@ so that TightVNC could focus on Windows platforms.  TigerVNC supports a variant
 of Tight encoding that is greatly accelerated by the use of the libjpeg-turbo
 JPEG codec.
 
+Modifications in this fork
+==========================
+
+This fork adds an optional full-screen scale-to-fit mode for TigerVNC Viewer.
+When the local monitor is larger than the remote framebuffer, the viewer can
+scale the remote desktop to fill the full-screen window instead of centering it
+at a 1:1 pixel size.
+
+The feature is exposed as the ``FullScreenScaleToFit`` parameter and as a
+viewer options checkbox named ``Scale full-screen sessions to fit``.  Pointer
+events are mapped back to the original remote framebuffer coordinates, and the
+Windows offscreen drawing path uses scaled blits so the displayed image and
+mouse input region stay aligned.
+
 
 Legal
 =====

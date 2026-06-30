@@ -76,6 +76,28 @@ void Surface::draw(int src_x, int src_y, int dst_x, int dst_y,
   DeleteDC(dc);
 }
 
+void Surface::drawScaled(int src_x, int src_y, int src_w, int src_h,
+                         int dst_x, int dst_y, int dst_w, int dst_h)
+{
+  HDC dc;
+
+  dc = CreateCompatibleDC(fl_gc);
+  if (!dc)
+    throw core::win32_error("CreateCompatibleDC", GetLastError());
+
+  if (!SelectObject(dc, bitmap))
+    throw core::win32_error("SelectObject", GetLastError());
+
+  SetStretchBltMode(fl_gc, COLORONCOLOR);
+  if (!StretchBlt(fl_gc, dst_x, dst_y, dst_w, dst_h,
+                  dc, src_x, src_y, src_w, src_h, SRCCOPY)) {
+    if (GetLastError() != ERROR_INVALID_HANDLE)
+      throw core::win32_error("StretchBlt", GetLastError());
+  }
+
+  DeleteDC(dc);
+}
+
 void Surface::draw(Surface* dst, int src_x, int src_y,
                    int dst_x, int dst_y, int dst_w, int dst_h)
 {
@@ -93,6 +115,35 @@ void Surface::draw(Surface* dst, int src_x, int src_y,
   draw(src_x, src_y, dst_x, dst_y, dst_w, dst_h);
   fl_gc = origdc;
 
+  DeleteDC(dstdc);
+}
+
+void Surface::drawScaled(Surface* dst, int src_x, int src_y,
+                         int src_w, int src_h,
+                         int dst_x, int dst_y, int dst_w, int dst_h)
+{
+  HDC dstdc, srcdc;
+
+  dstdc = CreateCompatibleDC(nullptr);
+  if (!dstdc)
+    throw core::win32_error("CreateCompatibleDC", GetLastError());
+  srcdc = CreateCompatibleDC(nullptr);
+  if (!srcdc)
+    throw core::win32_error("CreateCompatibleDC", GetLastError());
+
+  if (!SelectObject(dstdc, dst->bitmap))
+    throw core::win32_error("SelectObject", GetLastError());
+  if (!SelectObject(srcdc, bitmap))
+    throw core::win32_error("SelectObject", GetLastError());
+
+  SetStretchBltMode(dstdc, COLORONCOLOR);
+  if (!StretchBlt(dstdc, dst_x, dst_y, dst_w, dst_h,
+                  srcdc, src_x, src_y, src_w, src_h, SRCCOPY)) {
+    if (GetLastError() != ERROR_INVALID_HANDLE)
+      throw core::win32_error("StretchBlt", GetLastError());
+  }
+
+  DeleteDC(srcdc);
   DeleteDC(dstdc);
 }
 

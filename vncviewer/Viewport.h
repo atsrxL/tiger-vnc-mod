@@ -49,6 +49,17 @@ public:
   // Flush updates to screen
   void updateWindow();
 
+  // Resize the remote framebuffer without changing the displayed size.
+  void resizeFramebuffer(int w, int h);
+
+  // Change the size used for displaying the remote framebuffer.
+  void setDisplaySize(int w, int h);
+
+  int framebufferWidth() const;
+  int framebufferHeight() const;
+
+  core::Point remoteToLocal(const core::Point& pos) const;
+
   // New image for the locally rendered cursor
   void setCursor();
 
@@ -105,10 +116,15 @@ private:
 
   static void handleOptions(void *data);
 
+  core::Point localToRemote(const core::Point& pos) const;
+
 private:
   CConn* cc;
 
   PlatformPixelBuffer* frameBuffer;
+
+  int displayWidth;
+  int displayHeight;
 
   core::Point lastPointerPos;
   uint16_t lastButtonMask;

@@ -193,6 +193,10 @@ display.  This is default.
 Start in full-screen mode.
 .
 .TP
+.B \-FullScreenScaleToFit
+Scale the remote desktop up to fit the local monitor when in full-screen mode.
+.
+.TP
 .B \-FullScreenAllMonitors (DEPRECATED)
 Use all local monitors and not just the current one when switching to
 full-screen mode. Replaced by \fB-FullScreenMode=all\fP

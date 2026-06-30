@@ -107,6 +107,7 @@ private:
   static void reconfigureFullscreen(void *data);
   void remoteResize();
 
+  void updateViewportDisplaySize();
   void repositionWidgets();
 
   static void handleClose(Fl_Widget *wnd, void *data);
