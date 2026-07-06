@@ -21,6 +21,10 @@ include(CMakeMacroLibtoolFile)
 project(tigervnc)
 set(VERSION 1.16.80)
 
+if(WIN32)
+  enable_language(RC)
+endif()
+
 # The RC version must always be four comma-separated numbers
 string(REPLACE . , RCVERSION "${VERSION}.0")
 
@@ -75,7 +79,9 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=gnu99")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++11")
 
 # Tell the compiler to be stringent
-add_compile_definitions(_FORTIFY_SOURCE=2)
+if(NOT WIN32)
+  add_compile_definitions(_FORTIFY_SOURCE=2)
+endif()
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wformat=2 -Wvla")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wformat=2 -Wvla")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wzero-as-null-pointer-constant")
