@@ -65,6 +65,7 @@
 #include <FL/Fl_Toggle_Button.H>
 #include <FL/Fl_Int_Input.H>
 #include <FL/Fl_Choice.H>
+#include <FL/fl_ask.H>
 
 std::map<OptionsCallback*, void*> OptionsDialog::callbacks;
 
@@ -354,6 +355,7 @@ void OptionsDialog::loadOptions(void)
   }
 
   monitorArrangement->value(fullScreenSelectedMonitors.getMonitors());
+  windowedScaleCheckbox->value(windowedScaleToFit);
   fullScreenScaleCheckbox->value(fullScreenScaleToFit);
 
   handleFullScreenMode(selectedMonitorsButton, this);
@@ -512,6 +514,7 @@ void OptionsDialog::storeOptions(void)
   }
 
   fullScreenSelectedMonitors.setMonitors(monitorArrangement->value());
+  windowedScaleToFit.setParam(windowedScaleCheckbox->value());
   fullScreenScaleToFit.setParam(fullScreenScaleCheckbox->value());
 
   /* Misc. */
@@ -1230,6 +1233,12 @@ void OptionsDialog::createDisplayPage(int tx, int ty, int tw, int th)
   ty += INNER_MARGIN;
   width = tw - OUTER_MARGIN * 2;
 
+  windowedScaleCheckbox = new Fl_Check_Button(LBLRIGHT(tx, ty,
+                                            CHECK_MIN_WIDTH,
+                                            CHECK_HEIGHT,
+                                            _("Scale remote desktop down to fit window")));
+  ty += CHECK_HEIGHT + TIGHT_MARGIN;
+
   fullScreenScaleCheckbox = new Fl_Check_Button(LBLRIGHT(tx, ty,
                                             CHECK_MIN_WIDTH,
                                             CHECK_HEIGHT,
@@ -1427,6 +1436,13 @@ void OptionsDialog::handleOK(Fl_Widget* /*widget*/, void *data)
   dialog->hide();
 
   dialog->storeOptions();
+
+  try {
+    saveViewerParameters(nullptr);
+  } catch (std::exception& e) {
+    fl_alert(_("Unable to save the default configuration:\n\n%s"),
+             e.what());
+  }
 }
 
 int OptionsDialog::fltk_event_handler(int event)

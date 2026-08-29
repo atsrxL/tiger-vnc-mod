@@ -23,6 +23,7 @@
 #endif
 
 #include <assert.h>
+#include <algorithm>
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -63,6 +64,7 @@
 #include "fltk/util.h"
 #include "AuthDialog.h"
 #include "CConn.h"
+#include "CredentialStore.h"
 #include "OptionsDialog.h"
 #include "DesktopWindow.h"
 #include "PlatformPixelBuffer.h"
@@ -71,6 +73,10 @@
 
 std::string CConn::savedUsername;
 std::string CConn::savedPassword;
+#ifdef WIN32
+bool CConn::savedCredentialPersistent = false;
+std::string CConn::savedCredentialServer;
+#endif
 
 #ifdef WIN32
 #include "win32.h"
@@ -92,7 +98,12 @@ static const rfb::PixelFormat mediumColourPF(8, 8, false, true,
 static const unsigned bpsEstimateWindow = 1000;
 
 CConn::CConn()
-  : serverPort(0), sock(nullptr),
+  : serverPort(0),
+#ifdef WIN32
+    credentialLookupDone(false),
+    persistentCredentialUsed(false), credentialSavePending(false),
+#endif
+    sock(nullptr),
     msgTimer(this, &CConn::processNextMsg), desktop(nullptr),
     updateCount(0), pixelCount(0),
     lastServerEncoding((unsigned int)-1), bpsEstimate(20000000)
@@ -164,6 +175,9 @@ CConn::~CConn()
 void CConn::connect(const char* vncServerName, network::Socket* socket)
 {
   sock = socket;
+#ifdef WIN32
+  credentialServer.clear();
+#endif
   if(sock == nullptr) {
     try {
 #ifndef WIN32
@@ -176,6 +190,10 @@ void CConn::connect(const char* vncServerName, network::Socket* socket)
       {
         network::getHostAndPort(vncServerName, &serverHost, &serverPort);
 
+#ifdef WIN32
+        credentialServer = credentialstore::serverKey(vncServerName);
+#endif
+
         sock = new network::TcpSocket(serverHost.c_str(), serverPort);
         vlog.info(_("Connected to host %s port %d"),
                   serverHost.c_str(), serverPort);
@@ -186,7 +204,26 @@ void CConn::connect(const char* vncServerName, network::Socket* socket)
                        vncServerName, e.what());
       return;
     }
+  } else {
+    serverHost = sock->getPeerAddress();
+    serverPort = 0;
+    try {
+      std::string endpointHost;
+      network::getHostAndPort(sock->getPeerEndpoint(), &endpointHost,
+                              &serverPort);
+    } catch (std::exception&) {
+      // The peer address is still useful even if its port is unavailable.
+    }
+    vlog.info(_("Connected to reverse host %s"), serverHost.c_str());
   }
+
+#ifdef WIN32
+  // The reconnect cache must never leak credentials between servers. Reverse
+  // connections deliberately have no persistent key, so they do not offer
+  // device-level password storage.
+  if (savedCredentialServer != credentialServer)
+    clearSavedCredentialCache();
+#endif
 
   Fl::add_fd(sock->getFd(), FL_READ | FL_EXCEPT, socketEvent, this);
 
@@ -241,6 +278,25 @@ std::string CConn::connectionInfo()
 
   return infoText;
 }
+
+#ifdef WIN32
+void CConn::clearSavedCredentialCache()
+{
+  savedUsername.clear();
+  std::fill(savedPassword.begin(), savedPassword.end(), '\0');
+  savedPassword.clear();
+  savedCredentialPersistent = false;
+  savedCredentialServer.clear();
+}
+
+void CConn::forgetSavedCredential(const std::string& serverName)
+{
+  std::string key = credentialstore::serverKey(serverName);
+  credentialstore::remove(key);
+  if (savedCredentialServer == key)
+    clearSavedCredentialCache();
+}
+#endif
 
 unsigned CConn::getUpdateCount()
 {
@@ -304,8 +360,26 @@ void CConn::processNextMsg(core::Timer*)
     vlog.info("%s", e.what());
     disconnect();
   } catch (rfb::auth_error& e) {
+#ifdef WIN32
+    if (persistentCredentialUsed && !credentialServer.empty()) {
+      try {
+        credentialstore::remove(credentialServer);
+      } catch (std::exception& removeError) {
+        vlog.error(_("Unable to remove the rejected saved credential: %s"),
+                   removeError.what());
+      }
+    }
+#endif
+#ifdef WIN32
+    clearSavedCredentialCache();
+    credentialSavePending = false;
+    pendingUsername.clear();
+    std::fill(pendingPassword.begin(), pendingPassword.end(), '\0');
+    pendingPassword.clear();
+#else
     savedUsername.clear();
     savedPassword.clear();
+#endif
     vlog.error(_("Authentication failed: %s"), e.what());
     abort_connection(_("Failed to authenticate with the server. Reason "
                        "given by the server:\n\n%s"), e.what());
@@ -356,12 +430,18 @@ void CConn::getUserPasswd(bool secure, std::string *user,
   }
 
   if (user && !savedUsername.empty() && !savedPassword.empty()) {
+#ifdef WIN32
+    persistentCredentialUsed = savedCredentialPersistent;
+#endif
     *user = savedUsername;
     *password = savedPassword;
     return;
   }
 
   if (!user && !savedPassword.empty()) {
+#ifdef WIN32
+    persistentCredentialUsed = savedCredentialPersistent;
+#endif
     *password = savedPassword;
     return;
   }
@@ -384,7 +464,53 @@ void CConn::getUserPasswd(bool secure, std::string *user,
     return;
   }
 
-  AuthDialog d(secure, user != nullptr, password != nullptr);
+#ifdef WIN32
+  if (!credentialLookupDone && !credentialServer.empty()) {
+    credentialLookupDone = true;
+
+    try {
+      std::string storedUsername;
+      std::string storedPassword;
+
+      if (credentialstore::load(credentialServer, &storedUsername,
+                                &storedPassword)) {
+        if ((!user && !storedPassword.empty()) ||
+            (user && !storedUsername.empty() && !storedPassword.empty())) {
+          savedUsername = storedUsername;
+          savedPassword = storedPassword;
+          savedCredentialPersistent = true;
+          savedCredentialServer = credentialServer;
+          persistentCredentialUsed = true;
+
+          if (user)
+            *user = savedUsername;
+          *password = savedPassword;
+          return;
+        }
+      }
+    } catch (credentialstore::invalid_credential& e) {
+      vlog.error(_("Unable to load the saved credential: %s"), e.what());
+      try {
+        credentialstore::remove(credentialServer);
+      } catch (std::exception& removeError) {
+        vlog.error(_("Unable to remove the invalid saved credential: %s"),
+                   removeError.what());
+      }
+    } catch (std::exception& e) {
+      // Transient I/O and operating-system errors do not prove that the
+      // credential is corrupt, so keep it for a later attempt.
+      vlog.error(_("Unable to load the saved credential: %s"), e.what());
+    }
+  }
+#endif
+
+  AuthDialog d(secure, user != nullptr, password != nullptr,
+#ifdef WIN32
+               !credentialServer.empty()
+#else
+               true
+#endif
+  );
   d.show();
   while (d.shown())
     Fl::wait();
@@ -393,10 +519,14 @@ void CConn::getUserPasswd(bool secure, std::string *user,
   if (ret_val == 1) {
     bool keepPasswd;
 
+#ifdef WIN32
+    keepPasswd = d.getKeepPassword();
+#else
     if (reconnectOnError)
       keepPasswd = d.getKeepPassword();
     else
       keepPasswd = false;
+#endif
 
     if (user) {
       *user = d.getUser();
@@ -406,6 +536,16 @@ void CConn::getUserPasswd(bool secure, std::string *user,
     *password = d.getPassword();
     if (keepPasswd)
       savedPassword = d.getPassword();
+
+#ifdef WIN32
+    if (keepPasswd && !credentialServer.empty()) {
+      credentialSavePending = true;
+      pendingUsername = user ? d.getUser() : "";
+      pendingPassword = d.getPassword();
+      savedCredentialPersistent = false;
+      savedCredentialServer = credentialServer;
+    }
+#endif
   }
 
   if (ret_val != 1)
@@ -417,6 +557,27 @@ void CConn::getUserPasswd(bool secure, std::string *user,
 // server the pixel format and encodings to use and request the first update.
 void CConn::initDone()
 {
+#ifdef WIN32
+  if (credentialSavePending && !credentialServer.empty()) {
+    try {
+      credentialstore::save(credentialServer, pendingUsername,
+                            pendingPassword);
+      savedCredentialPersistent = true;
+      savedCredentialServer = credentialServer;
+      persistentCredentialUsed = true;
+    } catch (std::exception& e) {
+      vlog.error(_("Unable to save the credential: %s"), e.what());
+      fl_alert(_("Unable to save the password on this device:\n\n%s"),
+               e.what());
+    }
+
+    credentialSavePending = false;
+    pendingUsername.clear();
+    std::fill(pendingPassword.begin(), pendingPassword.end(), '\0');
+    pendingPassword.clear();
+  }
+#endif
+
   // If using AutoSelect with old servers, start in FullColor
   // mode. See comment in autoSelectFormatAndEncoding. 
   if (server.beforeVersion(3, 8) && autoSelect)

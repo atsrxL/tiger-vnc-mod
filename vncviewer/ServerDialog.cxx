@@ -28,6 +28,10 @@
 // FIXME: Workaround for FLTK including windows.h
 #ifdef WIN32
 #include <winsock2.h>
+#include <windows.h>
+#include <io.h>
+#else
+#include <unistd.h>
 #endif
 
 #include <FL/Fl.H>
@@ -51,6 +55,9 @@
 #include "fltk/layout.h"
 #include "fltk/util.h"
 #include "fltk/Fl_Suggestion_Input.h"
+#ifdef WIN32
+#include "CConn.h"
+#endif
 #include "ServerDialog.h"
 #include "OptionsDialog.h"
 #include "vncviewer.h"
@@ -93,6 +100,13 @@ ServerDialog::ServerDialog()
   x2 += BUTTON_WIDTH + INNER_MARGIN;
 
   y += BUTTON_HEIGHT + INNER_MARGIN;
+
+#ifdef WIN32
+  button = new Fl_Button(x, y, BUTTON_WIDTH * 2 + INNER_MARGIN,
+                         BUTTON_HEIGHT, _("Forget saved password"));
+  button->callback(this->handleForgetPassword, this);
+  y += BUTTON_HEIGHT + INNER_MARGIN;
+#endif
 
   divider = new Fl_Box(0, y, w(), 2);
   divider->box(FL_THIN_DOWN_FRAME);
@@ -262,6 +276,28 @@ void ServerDialog::handleSaveAs(Fl_Widget* /*widget*/, void* data)
 }
 
 
+#ifdef WIN32
+void ServerDialog::handleForgetPassword(Fl_Widget*, void* data)
+{
+  ServerDialog* dialog = (ServerDialog*)data;
+  const char* servername = dialog->serverName->value();
+
+  if ((servername == nullptr) || (servername[0] == '\0')) {
+    fl_alert(_("Enter a VNC server before forgetting its saved password."));
+    return;
+  }
+
+  try {
+    CConn::forgetSavedCredential(servername);
+    fl_message(_("The saved password for \"%s\" was removed."), servername);
+  } catch (std::exception& e) {
+    vlog.error(_("Unable to remove the saved credential: %s"), e.what());
+    fl_alert(_("Unable to forget the saved password:\n\n%s"), e.what());
+  }
+}
+#endif
+
+
 void ServerDialog::handleAbout(Fl_Widget* /*widget*/, void* /*data*/)
 {
   about_vncviewer();
@@ -337,73 +373,74 @@ void ServerDialog::loadServerHistory()
 
   serverHistory.clear();
 
-#ifdef _WIN32
-  rawHistory = loadHistoryFromRegKey();
-#else
-
   const char* stateDir = core::getvncstatedir();
   if (stateDir == nullptr)
     throw std::runtime_error(_("Could not determine VNC state directory path"));
 
-  char filepath[PATH_MAX];
-  snprintf(filepath, sizeof(filepath), "%s/%s", stateDir, SERVER_HISTORY);
+  std::string filepath = core::format("%s/%s", stateDir, SERVER_HISTORY);
 
   /* Read server history from file */
-  FILE* f = fopen(filepath, "r");
+  FILE* f = fopen(filepath.c_str(), "r");
   if (!f) {
     if (errno == ENOENT) {
-      // no history file
-      return;
-    }
-    throw core::posix_error(
-      core::format(_("Failed to open \"%s\""), filepath), errno);
-  }
-
-  int lineNr = 0;
-  while (!feof(f)) {
-    char line[256];
-
-    // Read the next line
-    lineNr++;
-    if (!fgets(line, sizeof(line), f)) {
-      if (feof(f))
-        break;
-
-      fclose(f);
-      throw core::posix_error(
-        core::format(_("Failed to read line %d in file \"%s\""),
-                     lineNr, filepath),
-        errno);
-    }
-
-    int len = strlen(line);
-
-    if (len == (sizeof(line) - 1)) {
-      fclose(f);
-      std::string msg = core::format(_("Failed to read line %d in "
-                                       "file \"%s\""),
-                                     lineNr, filepath);
-      throw std::runtime_error(
-        core::format("%s: %s", msg.c_str(), _("Line too long")));
-    }
-
-    if ((len > 0) && (line[len-1] == '\n')) {
-      line[len-1] = '\0';
-      len--;
-    }
-    if ((len > 0) && (line[len-1] == '\r')) {
-      line[len-1] = '\0';
-      len--;
-    }
-
-    if (len == 0)
-      continue;
-
-    rawHistory.push_back(line);
-  }
-
-  fclose(f);
+#ifdef _WIN32
+      // Read the old registry history once for compatibility. A subsequent
+      // connection writes it to the AppData state file.
+      rawHistory = loadHistoryFromRegKey();
 #endif
+    } else {
+      throw core::posix_error(
+        core::format(_("Failed to open \"%s\""), filepath.c_str()), errno);
+    }
+  } else {
+    int lineNr = 0;
+    while (!feof(f)) {
+      char line[256];
+
+      // Read the next line
+      lineNr++;
+      if (!fgets(line, sizeof(line), f)) {
+        if (feof(f))
+          break;
+
+        fclose(f);
+        throw core::posix_error(
+          core::format(_("Failed to read line %d in file \"%s\""),
+                       lineNr, filepath.c_str()),
+          errno);
+      }
+
+      int len = strlen(line);
+
+      if (len == (sizeof(line) - 1)) {
+        fclose(f);
+        std::string msg = core::format(_("Failed to read line %d in "
+                                         "file \"%s\""),
+                                       lineNr, filepath.c_str());
+        throw std::runtime_error(
+          core::format("%s: %s", msg.c_str(), _("Line too long")));
+      }
+
+      if ((len > 0) && (line[len-1] == '\n')) {
+        line[len-1] = '\0';
+        len--;
+      }
+      if ((len > 0) && (line[len-1] == '\r')) {
+        line[len-1] = '\0';
+        len--;
+      }
+
+      if (len == 0)
+        continue;
+
+      rawHistory.push_back(line);
+    }
+
+    if (fclose(f) != 0)
+      throw core::posix_error(
+        core::format(_("Failed to close \"%s\""), filepath.c_str()),
+        errno);
+  }
 
   // Filter out duplicates, even if they have different formats
   for (const std::string& entry : rawHistory) {
@@ -418,22 +455,29 @@ void ServerDialog::loadServerHistory()
 
 void ServerDialog::saveServerHistory()
 {
-#ifdef _WIN32
-  saveHistoryToRegKey(serverHistory);
-  return;
-#endif
-
   const char* stateDir = core::getvncstatedir();
   if (stateDir == nullptr)
     throw std::runtime_error(_("Could not determine VNC state directory path"));
 
-  char filepath[PATH_MAX];
-  snprintf(filepath, sizeof(filepath), "%s/%s", stateDir, SERVER_HISTORY);
+  if ((core::mkdir_p(stateDir, 0700) == -1) && (errno != EEXIST))
+    throw core::posix_error(
+      core::format(_("Failed to create directory \"%s\""), stateDir),
+      errno);
 
-  /* Write server history to file */
-  FILE* f = fopen(filepath, "w+");
+  std::string filepath = core::format("%s/%s", stateDir, SERVER_HISTORY);
+#ifdef WIN32
+  std::string temporaryPath = core::format(
+    "%s.tmp.%lu", filepath.c_str(), (unsigned long)GetCurrentProcessId());
+#else
+  std::string temporaryPath = core::format(
+    "%s.tmp.%ld", filepath.c_str(), (long)getpid());
+#endif
+
+  /* Write server history atomically in the state directory. */
+  FILE* f = fopen(temporaryPath.c_str(), "wb");
   if (!f) {
-    std::string msg = core::format(_("Failed to open \"%s\""), filepath);
+    std::string msg = core::format(_("Failed to open \"%s\""),
+                                   temporaryPath.c_str());
     throw core::posix_error(msg.c_str(), errno);
   }
 
@@ -442,10 +486,62 @@ void ServerDialog::saveServerHistory()
   for (const std::string& entry : serverHistory) {
     if (++count > SERVER_HISTORY_SIZE)
       break;
-    fprintf(f, "%s\n", entry.c_str());
+    if (fprintf(f, "%s\n", entry.c_str()) < 0) {
+      int err = errno ? errno : EIO;
+      fclose(f);
+      ::remove(temporaryPath.c_str());
+      throw core::posix_error(
+        core::format(_("Failed to write \"%s\""), temporaryPath.c_str()),
+        err);
+    }
   }
 
-  fclose(f);
+  if (fflush(f) != 0) {
+    int err = errno;
+    fclose(f);
+    ::remove(temporaryPath.c_str());
+    throw core::posix_error(
+      core::format(_("Failed to write \"%s\""), temporaryPath.c_str()),
+      err);
+  }
+
+#ifdef WIN32
+  if (_commit(_fileno(f)) != 0) {
+#else
+  if (fsync(fileno(f)) != 0) {
+#endif
+    int err = errno;
+    fclose(f);
+    ::remove(temporaryPath.c_str());
+    throw core::posix_error(
+      core::format(_("Failed to write \"%s\""), temporaryPath.c_str()),
+      err);
+  }
+
+  if (fclose(f) != 0) {
+    int err = errno;
+    ::remove(temporaryPath.c_str());
+    throw core::posix_error(
+      core::format(_("Failed to close \"%s\""), temporaryPath.c_str()),
+      err);
+  }
+
+#ifdef WIN32
+  if (!MoveFileExA(temporaryPath.c_str(), filepath.c_str(),
+                   MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    DWORD err = GetLastError();
+    ::remove(temporaryPath.c_str());
+    throw core::win32_error(
+      core::format(_("Failed to replace \"%s\""), filepath.c_str()), err);
+  }
+#else
+  if (rename(temporaryPath.c_str(), filepath.c_str()) != 0) {
+    int err = errno;
+    ::remove(temporaryPath.c_str());
+    throw core::posix_error(
+      core::format(_("Failed to replace \"%s\""), filepath.c_str()), err);
+  }
+#endif
 }
 
 void ServerDialog::updateUsedDir(const char* filename)
@@ -459,7 +555,12 @@ void ServerDialog::onServerHistoryRemove(Fl_Widget*, std::string s, void* data)
 {
   ServerDialog *dialog = (ServerDialog*)data;
   dialog->serverHistory.remove(s);
-  dialog->saveServerHistory();
+  try {
+    dialog->saveServerHistory();
+  } catch (std::exception& e) {
+    vlog.error(_("Unable to save the server history: %s"), e.what());
+    fl_alert(_("Unable to save the server history:\n\n%s"), e.what());
+  }
 }
 
 std::string ServerDialog::serverHistoryNormalize(const std::string s)

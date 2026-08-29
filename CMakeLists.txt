@@ -39,6 +39,15 @@ endif()
 
 option(INSTALL_SYSTEMD_UNITS "Install TigerVNC systemd units" ON)
 
+option(BUILD_STATIC
+  "Link statically against most libraries, if possible" OFF)
+
+option(BUILD_STATIC_GCC
+  "Link statically against only libgcc and libstdc++" OFF)
+
+set(STATIC_GNUTLS_ROOT "" CACHE PATH
+  "Prefix containing a custom static GnuTLS build")
+
 if(MSVC)
   message(FATAL_ERROR "TigerVNC cannot be built with Visual Studio.  Please use MinGW")
 endif()
@@ -312,6 +321,40 @@ endif()
 
 # Check for GNUTLS library
 trioption(ENABLE_GNUTLS "Enable protocol encryption and advanced authentication")
+
+if(WIN32 AND BUILD_STATIC AND ENABLE_GNUTLS)
+  if(NOT STATIC_GNUTLS_ROOT)
+    message(FATAL_ERROR
+      "STATIC_GNUTLS_ROOT is required for a static Windows build with GnuTLS")
+  endif()
+
+  file(TO_CMAKE_PATH "${STATIC_GNUTLS_ROOT}" _static_gnutls_root)
+  set(_static_gnutls_header
+    "${_static_gnutls_root}/include/gnutls/gnutls.h")
+  set(_static_gnutls_library
+    "${_static_gnutls_root}/lib/libgnutls.a")
+  set(_static_gnutls_pc
+    "${_static_gnutls_root}/lib/pkgconfig/gnutls.pc")
+
+  if(NOT EXISTS "${_static_gnutls_header}")
+    message(FATAL_ERROR
+      "Static GnuTLS header missing: ${_static_gnutls_header}")
+  endif()
+  if(NOT EXISTS "${_static_gnutls_library}")
+    message(FATAL_ERROR
+      "Static GnuTLS library missing: ${_static_gnutls_library}")
+  endif()
+  if(NOT EXISTS "${_static_gnutls_pc}")
+    message(FATAL_ERROR
+      "Static GnuTLS pkg-config file missing: ${_static_gnutls_pc}")
+  endif()
+
+  set(GNUTLS_INCLUDE_DIR "${_static_gnutls_root}/include"
+    CACHE PATH "Static GnuTLS include directory" FORCE)
+  set(GNUTLS_LIBRARY "${_static_gnutls_library}"
+    CACHE FILEPATH "Static GnuTLS library" FORCE)
+endif()
+
 if(ENABLE_GNUTLS)
   if(ENABLE_GNUTLS STREQUAL "AUTO")
     find_package(GnuTLS)

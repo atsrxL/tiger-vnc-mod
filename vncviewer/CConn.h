@@ -44,6 +44,10 @@ public:
   unsigned getPixelCount();
   unsigned getPosition();
 
+#ifdef WIN32
+  static void forgetSavedCredential(const std::string& serverName);
+#endif
+
 protected:
 
   // Callback when socket is ready (or broken)
@@ -98,9 +102,21 @@ private:
 
   static void handleUpdateTimeout(void *data);
 
+#ifdef WIN32
+  static void clearSavedCredentialCache();
+#endif
+
 private:
   std::string serverHost;
   int serverPort;
+#ifdef WIN32
+  std::string credentialServer;
+  bool credentialLookupDone;
+  bool persistentCredentialUsed;
+  bool credentialSavePending;
+  std::string pendingUsername;
+  std::string pendingPassword;
+#endif
   network::Socket* sock;
   core::MethodTimer<CConn> msgTimer;
 
@@ -119,6 +135,10 @@ private:
 
   static std::string savedUsername;
   static std::string savedPassword;
+#ifdef WIN32
+  static bool savedCredentialPersistent;
+  static std::string savedCredentialServer;
+#endif
 };
 
 #endif

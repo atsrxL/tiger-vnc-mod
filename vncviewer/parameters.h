@@ -53,6 +53,7 @@ extern core::IntParameter qualityLevel;
 extern core::BoolParameter maximize;
 extern core::BoolParameter fullScreen;
 extern core::BoolParameter fullScreenScaleToFit;
+extern core::BoolParameter windowedScaleToFit;
 extern core::EnumParameter fullScreenMode;
 extern core::BoolParameter fullScreenAllMonitors; // deprecated
 extern MonitorIndicesParameter fullScreenSelectedMonitors;
@@ -88,7 +89,6 @@ char* loadViewerParameters(const char *filename);
 
 #ifdef _WIN32
 std::list<std::string> loadHistoryFromRegKey();
-void saveHistoryToRegKey(const std::list<std::string>& serverHistory);
 #endif
 
 void migrateDeprecatedOptions();

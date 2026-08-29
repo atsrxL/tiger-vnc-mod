@@ -44,6 +44,7 @@
 #include "CConn.h"
 #include "Surface.h"
 #include "Viewport.h"
+#include "ViewportGeometry.h"
 #include "touch.h"
 #include "fltk/event_dispatch_handler.h"
 
@@ -386,7 +387,7 @@ void DesktopWindow::resizeFramebuffer(int new_w, int new_h)
   // If we're letting the viewport match the window perfectly, then
   // keep things that way for the new size, otherwise just keep things
   // like they are.
-  if (!fullscreen_active() && !maximized) {
+  if (!fullscreen_active() && !maximized && !windowedScaleToFit) {
     if ((w() == viewport->w()) && (h() == viewport->h()))
       size(new_w, new_h);
   }
@@ -1304,7 +1305,9 @@ void DesktopWindow::remoteResize()
 
   if (!::remoteResize)
     return;
-  if (fullscreen_active() && fullScreenScaleToFit)
+  if (viewportgeometry::scaleToFitEnabled(fullscreen_active(),
+                                          fullScreenScaleToFit,
+                                          windowedScaleToFit))
     return;
   if (!cc->server.supportsSetDesktopSize)
     return;
@@ -1470,15 +1473,15 @@ void DesktopWindow::updateViewportDisplaySize()
   display_w = viewport->framebufferWidth();
   display_h = viewport->framebufferHeight();
 
-  if (fullscreen_active() && fullScreenScaleToFit) {
-    double scale_x, scale_y, scale;
-
-    scale_x = (double)w() / viewport->framebufferWidth();
-    scale_y = (double)h() / viewport->framebufferHeight();
-    scale = std::min(scale_x, scale_y);
-
-    display_w = (int)(viewport->framebufferWidth() * scale);
-    display_h = (int)(viewport->framebufferHeight() * scale);
+  bool fullscreen = fullscreen_active();
+  if (viewportgeometry::scaleToFitEnabled(fullscreen,
+                                          fullScreenScaleToFit,
+                                          windowedScaleToFit)) {
+    core::Point displaySize = viewportgeometry::scaleToFit(
+      viewport->framebufferWidth(), viewport->framebufferHeight(),
+      w(), h(), fullscreen);
+    display_w = displaySize.x;
+    display_h = displaySize.y;
   }
 
   if ((display_w != viewport->w()) || (display_h != viewport->h())) {
@@ -1590,6 +1593,10 @@ void DesktopWindow::handleOptions(void *data)
     self->fullscreen_on();
   else if (!fullScreen && self->fullscreen_active())
     self->fullscreen_off();
+
+  self->updateViewportDisplaySize();
+  self->remoteResize();
+  self->repositionWidgets();
 }
 
 void DesktopWindow::handleFullscreenTimeout(void *data)

@@ -33,7 +33,8 @@ class CConn;
 class AuthDialog : public Fl_Window
 {
 public:
-  AuthDialog(bool secure, bool needsUser, bool needsPassword);
+  AuthDialog(bool secure, bool needsUser, bool needsPassword,
+             bool allowPasswordStorage = true);
   ~AuthDialog();
 
   int result();

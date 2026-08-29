@@ -28,6 +28,9 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <io.h>
+#else
+#include <unistd.h>
 #endif
 
 #include "parameters.h"
@@ -154,6 +157,11 @@ core::BoolParameter
                        _("Scale the remote desktop up to fit the local "
                          "monitor when in full-screen mode"),
                        false);
+core::BoolParameter
+  windowedScaleToFit("WindowedScaleToFit",
+                     _("Scale the remote desktop down to fit the viewer "
+                       "window"),
+                     false);
 core::EnumParameter
   fullScreenMode("FullScreenMode",
                  core::format(
@@ -256,6 +264,11 @@ core::StringParameter
 
 static const char* IDENTIFIER_STRING = "TigerVNC Configuration file Version 1.0";
 
+// Keep the default server name independent from the currently active
+// connection. This lets the options dialog persist settings immediately
+// without accidentally replacing the saved server with a tunnel endpoint.
+static std::string defaultServerName;
+
 /*
  * We only save the sub set of parameters that can be modified from
  * the graphical user interface
@@ -282,6 +295,7 @@ static core::VoidParameter* parameterArray[] = {
   /* Display */
   &fullScreen,
   &fullScreenScaleToFit,
+  &windowedScaleToFit,
   &fullScreenMode,
   &fullScreenSelectedMonitors,
   /* Input */
@@ -389,46 +403,6 @@ static bool decodeValue(const char* val, char* dest, size_t destSize) {
 
 
 #ifdef _WIN32
-static void setKeyString(const char *_name, const char *_value, HKEY* hKey) {
-  
-  const DWORD buffersize = 256;
-
-  wchar_t name[buffersize];
-  unsigned size = fl_utf8towc(_name, strlen(_name)+1, name, buffersize);
-  if (size >= buffersize)
-    throw std::length_error("The name of the parameter is too large");
-
-  char encodingBuffer[buffersize];
-  if (!encodeValue(_value, encodingBuffer, buffersize))
-    throw std::length_error("The parameter is too large");
-
-  wchar_t value[buffersize];
-  size = fl_utf8towc(encodingBuffer, strlen(encodingBuffer)+1, value, buffersize);
-  if (size >= buffersize)
-    throw std::length_error("The parameter is too large");
-
-  LONG res = RegSetValueExW(*hKey, name, 0, REG_SZ, (BYTE*)&value, (wcslen(value)+1)*2);
-  if (res != ERROR_SUCCESS)
-    throw core::win32_error("RegSetValueExW", res);
-}
-
-
-static void setKeyInt(const char *_name, const int _value, HKEY* hKey) {
-
-  const DWORD buffersize = 256;
-  wchar_t name[buffersize];
-  DWORD value = _value;
-
-  unsigned size = fl_utf8towc(_name, strlen(_name)+1, name, buffersize);
-  if (size >= buffersize)
-    throw std::length_error("The name of the parameter is too large");
-
-  LONG res = RegSetValueExW(*hKey, name, 0, REG_DWORD, (BYTE*)&value, sizeof(DWORD));
-  if (res != ERROR_SUCCESS)
-    throw core::win32_error("RegSetValueExW", res);
-}
-
-
 static bool getKeyString(const char* _name, char* dest, size_t destSize, HKEY* hKey) {
   
   const DWORD buffersize = 256;
@@ -441,7 +415,7 @@ static bool getKeyString(const char* _name, char* dest, size_t destSize, HKEY* h
     throw std::length_error("The name of the parameter is too large");
 
   value = new WCHAR[destSize];
-  valuesize = destSize;
+  valuesize = destSize * sizeof(WCHAR);
   LONG res = RegQueryValueExW(*hKey, name, nullptr, nullptr, (LPBYTE)value, &valuesize);
   if (res != ERROR_SUCCESS){
     delete [] value;
@@ -490,129 +464,6 @@ static bool getKeyInt(const char* _name, int* dest, HKEY* hKey) {
 
   *dest = (int)value;
   return true;
-}
-
-static void removeValue(const char* _name, HKEY* hKey) {
-  const DWORD buffersize = 256;
-  wchar_t name[buffersize];
-
-  unsigned size = fl_utf8towc(_name, strlen(_name)+1, name, buffersize);
-  if (size >= buffersize)
-    throw std::length_error("The name of the parameter is too large");
-
-  LONG res = RegDeleteValueW(*hKey, name);
-  if (res != ERROR_SUCCESS) {
-    if (res != ERROR_FILE_NOT_FOUND)
-      throw core::win32_error("RegDeleteValueW", res);
-    // The value does not exist, no need to remove it.
-    return;
-  }
-}
-
-void saveHistoryToRegKey(const std::list<std::string>& serverHistory)
-{
-  HKEY hKey;
-  LONG res = RegCreateKeyExW(HKEY_CURRENT_USER,
-                             L"Software\\TigerVNC\\vncviewer\\history", 0, nullptr,
-                             REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, nullptr,
-                             &hKey, nullptr);
-
-  if (res != ERROR_SUCCESS)
-    throw core::win32_error(_("Failed to create registry key"), res);
-
-  unsigned index = 0;
-  assert(SERVER_HISTORY_SIZE < 100);
-  char indexString[3];
-
-  try {
-    for (const std::string& entry : serverHistory) {
-      if (index > SERVER_HISTORY_SIZE)
-        break;
-      snprintf(indexString, 3, "%d", index);
-      setKeyString(indexString, entry.c_str(), &hKey);
-      index++;
-    }
-  } catch (std::exception& e) {
-    RegCloseKey(hKey);
-    throw;
-  }
-
-  res = RegCloseKey(hKey);
-  if (res != ERROR_SUCCESS)
-    throw core::win32_error(_("Failed to close registry key"), res);
-}
-
-static void saveToReg(const char* servername) {
-  
-  HKEY hKey;
-    
-  LONG res = RegCreateKeyExW(HKEY_CURRENT_USER,
-                             L"Software\\TigerVNC\\vncviewer", 0, nullptr,
-                             REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, nullptr,
-                             &hKey, nullptr);
-  if (res != ERROR_SUCCESS)
-    throw core::win32_error(_("Failed to create registry key"), res);
-
-  try {
-    setKeyString("ServerName", servername, &hKey);
-  } catch (std::exception& e) {
-    RegCloseKey(hKey);
-    throw std::runtime_error(core::format(
-      _("Failed to save \"%s\": %s"), "ServerName", e.what()));
-  }
-
-  for (core::VoidParameter* param : parameterArray) {
-    core::IntParameter* iparam;
-    core::BoolParameter* bparam;
-
-    if (param->isDefault()) {
-      try {
-        removeValue(param->getName(), &hKey);
-      } catch (std::exception& e) {
-        RegCloseKey(hKey);
-        throw std::runtime_error(
-          core::format(_("Failed to remove \"%s\": %s"),
-                       param->getName(), e.what()));
-      }
-      continue;
-    }
-
-    iparam = dynamic_cast<core::IntParameter*>(param);
-    bparam = dynamic_cast<core::BoolParameter*>(param);
-
-    try {
-      if (iparam != nullptr) {
-        setKeyInt(iparam->getName(), (int)*(iparam), &hKey);
-      } else if (bparam != nullptr) {
-        setKeyInt(bparam->getName(), (int)*(bparam), &hKey);
-      } else {
-        setKeyString(param->getName(), param->getValueStr().c_str(), &hKey);
-      }
-    } catch (std::exception& e) {
-      RegCloseKey(hKey);
-      throw std::runtime_error(
-        core::format(_("Failed to save \"%s\": %s"),
-                     param->getName(), e.what()));
-    }
-  }
-
-  // Remove read-only parameters to replicate the behaviour of Linux/macOS when they
-  // store a config to disk. If the parameter hasn't been migrated at this point it
-  // will be lost.
-  for (core::VoidParameter* param : readOnlyParameterArray) {
-    try {
-      removeValue(param->getName(), &hKey);
-    } catch (std::exception& e) {
-      RegCloseKey(hKey);
-      throw std::runtime_error(
-        core::format(_("Failed to remove \"%s\": %s"),
-                     param->getName(), e.what()));
-    }
-  }
-
-  res = RegCloseKey(hKey);
-  if (res != ERROR_SUCCESS)
-    throw core::win32_error(_("Failed to close registry key"), res);
 }
 
 std::list<std::string> loadHistoryFromRegKey()
@@ -746,42 +597,75 @@ static char* loadFromReg() {
 void saveViewerParameters(const char *filename, const char *servername) {
 
   const size_t buffersize = 256;
-  char filepath[PATH_MAX];
+  std::string filepath;
+  std::string temporaryFilepath;
   char encodingBuffer[buffersize];
+  const char* servernameToSave;
 
-  // Write to the registry or a predefined file if no filename was specified.
+  // Write to a predefined file if no filename was specified. On Windows this
+  // is %APPDATA%\TigerVNC\default.tigervnc, just like the XDG config file on
+  // Unix-like systems.
   if(filename == nullptr) {
-
-#ifdef _WIN32
-    saveToReg(servername);
-    return;
-#endif
-    
     const char* configDir = core::getvncconfigdir();
     if (configDir == nullptr)
       throw std::runtime_error(_("Could not determine VNC config directory path"));
 
-    snprintf(filepath, sizeof(filepath), "%s/default.tigervnc", configDir);
+    if ((core::mkdir_p(configDir, 0700) == -1) && (errno != EEXIST))
+      throw core::posix_error(
+        core::format(_("Failed to create directory \"%s\""), configDir),
+        errno);
+
+    filepath = core::format("%s/default.tigervnc", configDir);
+
+    if (servername != nullptr)
+      defaultServerName = servername;
   } else {
-    snprintf(filepath, sizeof(filepath), "%s", filename);
+    filepath = filename;
   }
 
-  /* Write parameters to file */
-  FILE* f = fopen(filepath, "w+");
+  servernameToSave = (servername != nullptr) ? servername
+                                             : defaultServerName.c_str();
+
+#ifdef _WIN32
+  temporaryFilepath = core::format(
+    "%s.tmp.%lu", filepath.c_str(), (unsigned long)GetCurrentProcessId());
+#else
+  temporaryFilepath = core::format(
+    "%s.tmp.%ld", filepath.c_str(), (long)getpid());
+#endif
+
+  /* Write parameters to a temporary file in the destination directory. */
+  FILE* f = fopen(temporaryFilepath.c_str(), "wb");
   if (!f)
     throw core::posix_error(
-      core::format(_("Failed to open \"%s\""), filepath), errno);
+      core::format(_("Failed to open \"%s\""), temporaryFilepath.c_str()),
+      errno);
 
-  fprintf(f, "%s\n", IDENTIFIER_STRING);
-  fprintf(f, "\n");
-
-  if (!encodeValue(servername, encodingBuffer, buffersize)) {
+  if ((fprintf(f, "%s\n", IDENTIFIER_STRING) < 0) ||
+      (fprintf(f, "\n") < 0)) {
+    int err = errno ? errno : EIO;
     fclose(f);
+    remove(temporaryFilepath.c_str());
+    throw core::posix_error(
+      core::format(_("Failed to write \"%s\""), temporaryFilepath.c_str()),
+      err);
+  }
+
+  if (!encodeValue(servernameToSave, encodingBuffer, buffersize)) {
+    fclose(f);
+    remove(temporaryFilepath.c_str());
     throw std::runtime_error(
       core::format(_("Failed to save \"%s\": %s"), "ServerName",
                    _("Could not encode parameter")));
   }
-  fprintf(f, "ServerName=%s\n", encodingBuffer);
+  if (fprintf(f, "ServerName=%s\n", encodingBuffer) < 0) {
+    int err = errno ? errno : EIO;
+    fclose(f);
+    remove(temporaryFilepath.c_str());
+    throw core::posix_error(
+      core::format(_("Failed to write \"%s\""), temporaryFilepath.c_str()),
+      err);
+  }
 
   for (core::VoidParameter* param : parameterArray) {
     if (param->isDefault())
@@ -789,13 +673,68 @@ void saveViewerParameters(const char *filename, const char *servername) {
     if (!encodeValue(param->getValueStr().c_str(),
                      encodingBuffer, buffersize)) {
       fclose(f);
+      remove(temporaryFilepath.c_str());
       throw std::runtime_error(
         core::format(_("Failed to save \"%s\": %s"), param->getName(),
                      _("Could not encode parameter")));
     }
-    fprintf(f, "%s=%s\n", param->getName(), encodingBuffer);
+    if (fprintf(f, "%s=%s\n", param->getName(), encodingBuffer) < 0) {
+      int err = errno ? errno : EIO;
+      fclose(f);
+      remove(temporaryFilepath.c_str());
+      throw core::posix_error(
+        core::format(_("Failed to write \"%s\""),
+                     temporaryFilepath.c_str()),
+        err);
+    }
   }
-  fclose(f);
+
+  if (fflush(f) != 0) {
+    int err = errno;
+    fclose(f);
+    remove(temporaryFilepath.c_str());
+    throw core::posix_error(
+      core::format(_("Failed to write \"%s\""), temporaryFilepath.c_str()),
+      err);
+  }
+
+#ifdef _WIN32
+  if (_commit(_fileno(f)) != 0) {
+#else
+  if (fsync(fileno(f)) != 0) {
+#endif
+    int err = errno;
+    fclose(f);
+    remove(temporaryFilepath.c_str());
+    throw core::posix_error(
+      core::format(_("Failed to write \"%s\""), temporaryFilepath.c_str()),
+      err);
+  }
+
+  if (fclose(f) != 0) {
+    int err = errno;
+    remove(temporaryFilepath.c_str());
+    throw core::posix_error(
+      core::format(_("Failed to close \"%s\""), temporaryFilepath.c_str()),
+      err);
+  }
+
+#ifdef _WIN32
+  if (!MoveFileExA(temporaryFilepath.c_str(), filepath.c_str(),
+                   MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    DWORD err = GetLastError();
+    remove(temporaryFilepath.c_str());
+    throw core::win32_error(
+      core::format(_("Failed to replace \"%s\""), filepath.c_str()), err);
+  }
+#else
+  if (rename(temporaryFilepath.c_str(), filepath.c_str()) != 0) {
+    int err = errno;
+    remove(temporaryFilepath.c_str());
+    throw core::posix_error(
+      core::format(_("Failed to replace \"%s\""), filepath.c_str()), err);
+  }
+#endif
 }
 
 static bool findAndSetViewerParameterFromValue(
@@ -821,36 +760,45 @@ static bool findAndSetViewerParameterFromValue(
 char* loadViewerParameters(const char *filename) {
 
   const size_t buffersize = 256;
-  char filepath[PATH_MAX];
+  std::string filepath;
   char line[buffersize];
   char decodingBuffer[buffersize];
   static char servername[sizeof(line)];
 
   memset(servername, '\0', sizeof(servername));
 
-  // Load from the registry or a predefined file if no filename was specified.
+  // Load from the default AppData/XDG file if no filename was specified.
   if(filename == nullptr) {
-
-#ifdef _WIN32
-    return loadFromReg();
-#endif
-
     const char* configDir = core::getvncconfigdir();
     if (configDir == nullptr)
       throw std::runtime_error(_("Could not determine VNC config directory path"));
 
-    snprintf(filepath, sizeof(filepath), "%s/default.tigervnc", configDir);
+    filepath = core::format("%s/default.tigervnc", configDir);
   } else {
-    snprintf(filepath, sizeof(filepath), "%s", filename);
+    filepath = filename;
   }
 
   /* Read parameters from file */
-  FILE* f = fopen(filepath, "r");
+  FILE* f = fopen(filepath.c_str(), "r");
   if (!f) {
-    if (!filename)
-      return nullptr; // Use defaults.
+    int err = errno;
+    if (!filename) {
+#ifdef _WIN32
+      // Preserve compatibility with installations that stored defaults in
+      // HKCU. The registry is now read-only migration input; all new saves go
+      // to the AppData configuration file above.
+      if (err == ENOENT) {
+        char* legacyServerName = loadFromReg();
+        if (legacyServerName != nullptr)
+          defaultServerName = legacyServerName;
+        return legacyServerName;
+      }
+#endif
+      if (err == ENOENT)
+        return nullptr; // Use defaults.
+    }
     throw core::posix_error(
-      core::format(_("Failed to open \"%s\""), filepath), errno);
+      core::format(_("Failed to open \"%s\""), filepath.c_str()), err);
   }
 
   int lineNr = 0;
@@ -865,7 +813,7 @@ char* loadViewerParameters(const char *filename) {
       fclose(f);
       throw core::posix_error(
         core::format(_("Failed to read line %d in file \"%s\""),
-                     lineNr, filepath),
+                     lineNr, filepath.c_str()),
         errno);
     }
 
@@ -873,7 +821,7 @@ char* loadViewerParameters(const char *filename) {
       fclose(f);
       std::string msg = core::format(_("Failed to read line %d in "
                                        "file \"%s\""),
-                                     lineNr, filepath);
+                                     lineNr, filepath.c_str());
       throw std::runtime_error(
         core::format("%s: %s", msg.c_str(), _("Line too long")));
     }
@@ -885,7 +833,8 @@ char* loadViewerParameters(const char *filename) {
 
       fclose(f);
       throw std::runtime_error(core::format(
-        _("Configuration file %s is in an invalid format"), filepath));
+        _("Configuration file %s is in an invalid format"),
+        filepath.c_str()));
     }
 
     // Skip empty lines and comments
@@ -907,7 +856,7 @@ char* loadViewerParameters(const char *filename) {
     if (value == nullptr) {
       std::string msg = core::format(_("Failed to read line %d in "
                                        "file \"%s\""),
-                                     lineNr, filepath);
+                                     lineNr, filepath.c_str());
       vlog.error("%s: %s", msg.c_str(), _("Invalid format"));
       continue;
     }
@@ -943,7 +892,7 @@ char* loadViewerParameters(const char *filename) {
       // Just ignore this entry and continue with the rest
       std::string msg = core::format(_("Failed to read line %d in "
                                        "file \"%s\""),
-                                     lineNr, filepath);
+                                     lineNr, filepath.c_str());
       vlog.error("%s: %s", msg.c_str(), e.what());
       continue;
     }
@@ -951,14 +900,18 @@ char* loadViewerParameters(const char *filename) {
     if (invalidParameterName) {
       std::string msg = core::format(_("Failed to read line %d in "
                                        "file \"%s\""),
-                                     lineNr, filepath);
+                                     lineNr, filepath.c_str());
       vlog.error("%s: %s", msg.c_str(), _("Unknown parameter"));
     }
   }
-  fclose(f);
-  f = nullptr;
+  if (fclose(f) != 0)
+    throw core::posix_error(
+      core::format(_("Failed to close \"%s\""), filepath.c_str()), errno);
 
   migrateDeprecatedOptions();
+
+  if (filename == nullptr)
+    defaultServerName = servername;
 
   return servername;
 }

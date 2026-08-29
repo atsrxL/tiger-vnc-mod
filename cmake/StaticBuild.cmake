@@ -7,16 +7,16 @@
 # a lot of details change with each different build environment.
 #
 
-option(BUILD_STATIC
-    "Link statically against most libraries, if possible" OFF)
-
-option(BUILD_STATIC_GCC
-    "Link statically against only libgcc and libstdc++" OFF)
-
 if(BUILD_STATIC)
   message(STATUS "Attempting to link static binaries...")
 
   set(BUILD_STATIC_GCC 1)
+
+  if(WIN32)
+    if(NOT " ${CMAKE_EXE_LINKER_FLAGS} " MATCHES " -static ")
+      set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static")
+    endif()
+  endif()
 
   set(JPEG_LIBRARIES "-Wl,-Bstatic -ljpeg -Wl,-Bdynamic")
   set(ZLIB_LIBRARIES "-Wl,-Bstatic -lz -Wl,-Bdynamic")
@@ -68,68 +68,100 @@ if(BUILD_STATIC)
   endif()
 
   if(GNUTLS_FOUND)
-    # GnuTLS has historically had different crypto backends
-    FIND_LIBRARY(NETTLE_LIBRARY NAMES nettle libnettle
-      HINTS ${PC_GNUTLS_LIBDIR} ${PC_GNUTLS_LIBRARY_DIRS})
-    FIND_LIBRARY(TASN1_LIBRARY NAMES tasn1 libtasn1
-      HINTS ${PC_GNUTLS_LIBDIR} ${PC_GNUTLS_LIBRARY_DIRS})
-    FIND_LIBRARY(IDN2_LIBRARY NAMES idn2 libidn2
-      HINTS ${PC_GNUTLS_LIBDIR} ${PC_GNUTLS_LIBRARY_DIRS})
-    FIND_LIBRARY(ZSTD_LIBRARY NAMES zstd libzstd
-      HINTS ${PC_GNUTLS_LIBDIR} ${PC_GNUTLS_LIBRARY_DIRS})
+    if(WIN32)
+      find_package(PkgConfig REQUIRED)
 
-    set(GNUTLS_LIBRARIES "-Wl,-Bstatic -lgnutls")
-
-    if(TASN1_LIBRARY)
-      set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -ltasn1")
-    endif()
-    if(NETTLE_LIBRARY)
-      set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lhogweed -lnettle -lgmp")
-    endif()
-    if(IDN2_LIBRARY)
-      set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lidn2")
-    endif()
-    if(ZSTD_LIBRARY)
-      set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lzstd")
-    endif()
-
-    set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -Wl,-Bdynamic")
-
-    if (WIN32)
-      FIND_LIBRARY(P11KIT_LIBRARY NAMES p11-kit libp11-kit
-        HINTS ${PC_GNUTLS_LIBDIR} ${PC_GNUTLS_LIBRARY_DIRS})
-      FIND_LIBRARY(UNISTRING_LIBRARY NAMES unistring libunistring
-        HINTS ${PC_GNUTLS_LIBDIR} ${PC_GNUTLS_LIBRARY_DIRS})
-
-      # GnuTLS uses various crypto-api stuff
-      set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lcrypt32 -lncrypt -lbcrypt")
-      # And sockets
-      set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lws2_32")
-
-      # p11-kit only available as dynamic library for MSYS2 on Windows and dynamic linking of unistring is required
-      if(P11KIT_LIBRARY)
-        set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lp11-kit")
+      file(TO_CMAKE_PATH "${STATIC_GNUTLS_ROOT}" _static_gnutls_root)
+      set(_saved_pkg_config_path "$ENV{PKG_CONFIG_PATH}")
+      set(_had_pkg_config_path FALSE)
+      if(DEFINED ENV{PKG_CONFIG_PATH})
+        set(_had_pkg_config_path TRUE)
       endif()
-      if(UNISTRING_LIBRARY)
-        set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lunistring")
+
+      set(ENV{PKG_CONFIG_PATH}
+        "${_static_gnutls_root}/lib/pkgconfig")
+      pkg_check_modules(TVNC_STATIC_GNUTLS REQUIRED
+        NO_CMAKE_PATH
+        NO_CMAKE_ENVIRONMENT_PATH
+        gnutls)
+
+      if(_had_pkg_config_path)
+        set(ENV{PKG_CONFIG_PATH} "${_saved_pkg_config_path}")
+      else()
+        unset(ENV{PKG_CONFIG_PATH})
       endif()
+
+      if(NOT TVNC_STATIC_GNUTLS_STATIC_LDFLAGS)
+        message(FATAL_ERROR
+          "pkg-config --static returned no GnuTLS linker flags")
+      endif()
+
+      list(FIND TVNC_STATIC_GNUTLS_STATIC_LDFLAGS
+        "-lgnutls" _gnutls_flag_index)
+      if(_gnutls_flag_index EQUAL -1)
+        message(FATAL_ERROR
+          "Static GnuTLS linker flags do not contain -lgnutls")
+      endif()
+
+      string(FIND "${TVNC_STATIC_GNUTLS_STATIC_LDFLAGS}"
+        "p11-kit" _p11_kit_index)
+      if(NOT _p11_kit_index EQUAL -1)
+        message(FATAL_ERROR
+          "Static GnuTLS still requires p11-kit; rebuild it with --without-p11-kit")
+      endif()
+
+      message(STATUS
+        "Static GnuTLS pkg-config prefix: ${TVNC_STATIC_GNUTLS_PREFIX}")
+      message(STATUS
+        "Static GnuTLS link flags: ${TVNC_STATIC_GNUTLS_STATIC_LDFLAGS}")
+
+      # Keep pkg-config's exact --static order. Do not append the old
+      # hand-maintained zlib/intl/nettle dependency list.
+      set(GNUTLS_LIBRARIES
+        "-Wl,-Bstatic"
+        ${TVNC_STATIC_GNUTLS_STATIC_LDFLAGS}
+        "-Wl,-Bstatic")
+    else()
+      # GnuTLS has historically had different crypto backends
+      FIND_LIBRARY(NETTLE_LIBRARY NAMES nettle libnettle
+        HINTS ${PC_GNUTLS_LIBDIR} ${PC_GNUTLS_LIBRARY_DIRS})
+      FIND_LIBRARY(TASN1_LIBRARY NAMES tasn1 libtasn1
+        HINTS ${PC_GNUTLS_LIBDIR} ${PC_GNUTLS_LIBRARY_DIRS})
+      FIND_LIBRARY(IDN2_LIBRARY NAMES idn2 libidn2
+        HINTS ${PC_GNUTLS_LIBDIR} ${PC_GNUTLS_LIBRARY_DIRS})
+      FIND_LIBRARY(ZSTD_LIBRARY NAMES zstd libzstd
+        HINTS ${PC_GNUTLS_LIBDIR} ${PC_GNUTLS_LIBRARY_DIRS})
+
+      set(GNUTLS_LIBRARIES "-Wl,-Bstatic -lgnutls")
+
+      if(TASN1_LIBRARY)
+        set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -ltasn1")
+      endif()
+      if(NETTLE_LIBRARY)
+        set(GNUTLS_LIBRARIES
+          "${GNUTLS_LIBRARIES} -lhogweed -lnettle -lgmp")
+      endif()
+      if(IDN2_LIBRARY)
+        set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lidn2")
+      endif()
+      if(ZSTD_LIBRARY)
+        set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lzstd")
+      endif()
+
+      set(GNUTLS_LIBRARIES
+        "${GNUTLS_LIBRARIES} -Wl,-Bdynamic")
+
+      if(${CMAKE_SYSTEM_NAME} MATCHES "SunOS")
+        set(GNUTLS_LIBRARIES
+          "${GNUTLS_LIBRARIES} -lrt -lsocket")
+      endif()
+
+      set(GNUTLS_LIBRARIES
+        "${GNUTLS_LIBRARIES} ${ZLIB_LIBRARIES}")
+      set(GNUTLS_LIBRARIES
+        "${GNUTLS_LIBRARIES} ${Intl_LIBRARIES}")
+      string(STRIP "${GNUTLS_LIBRARIES}" GNUTLS_LIBRARIES)
     endif()
-
-    if(${CMAKE_SYSTEM_NAME} MATCHES "SunOS")
-      # nanosleep() lives here on Solaris
-      set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lrt")
-      # and socket functions are hidden here
-      set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lsocket")
-    endif()
-
-    # GnuTLS uses gettext and zlib, so make sure those are always
-    # included and in the proper order
-    set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} ${ZLIB_LIBRARIES}")
-    set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} ${Intl_LIBRARIES}")
-
-    # The last variables might introduce whitespace, which CMake
-    # throws a hissy fit about
-    string(STRIP ${GNUTLS_LIBRARIES} GNUTLS_LIBRARIES)
   endif()
 
   if(NETTLE_FOUND)
@@ -157,6 +189,26 @@ if(BUILD_STATIC)
 
       set(FLTK_LIBRARIES "${FLTK_LIBRARIES} -lX11")
     endif()
+  endif()
+
+  # On Windows, never leave a transitive dependency in dynamic search
+  # mode. System libraries still resolve through MinGW import archives.
+  if(WIN32)
+    foreach(_static_library_variable
+        JPEG_LIBRARIES
+        ZLIB_LIBRARIES
+        PIXMAN_LIBRARIES
+        Intl_LIBRARIES
+        GNUTLS_LIBRARIES
+        NETTLE_LIBRARIES
+        HOGWEED_LIBRARIES
+        FLTK_LIBRARIES)
+      if(DEFINED ${_static_library_variable})
+        string(REPLACE "-Wl,-Bdynamic" "-Wl,-Bstatic"
+          ${_static_library_variable}
+          "${${_static_library_variable}}")
+      endif()
+    endforeach()
   endif()
 
   # X11 libraries change constantly on Linux systems so we have to link

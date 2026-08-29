@@ -13,6 +13,7 @@ add_executable(vncviewer
   AuthDialog.cxx
   BaseTouchHandler.cxx
   CConn.cxx
+  CredentialStore.cxx
   DesktopWindow.cxx
   EmulateMB.cxx
   ServerDialog.cxx
@@ -21,6 +22,7 @@ add_executable(vncviewer
   OptionsDialog.cxx
   PlatformPixelBuffer.cxx
   Viewport.cxx
+  ViewportGeometry.cxx
   parameters.cxx
   touch.cxx
   MonitorIndicesParameter.cxx
@@ -68,7 +70,8 @@ if(GNUTLS_FOUND)
 endif()
 
 if(WIN32)
-  target_link_libraries(vncviewer msimg32)
+  target_compile_definitions(vncviewer PRIVATE NOMINMAX)
+  target_link_libraries(vncviewer msimg32 crypt32)
 elseif(APPLE)
   target_link_libraries(vncviewer "-framework Cocoa")
   target_link_libraries(vncviewer "-framework Carbon")

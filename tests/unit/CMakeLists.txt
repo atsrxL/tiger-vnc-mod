@@ -48,6 +48,25 @@ add_executable(unicode unicode.cxx)
 target_link_libraries(unicode core GTest::gtest_main)
 gtest_discover_tests(unicode)
 
+add_executable(viewportgeometry viewportgeometry.cxx
+               ../../vncviewer/ViewportGeometry.cxx)
+target_link_libraries(viewportgeometry core GTest::gtest_main)
+gtest_discover_tests(viewportgeometry)
+
+if(BUILD_VIEWER)
+  add_executable(viewerparameters viewerparameters.cxx
+                 ../../vncviewer/parameters.cxx
+                 ../../vncviewer/MonitorIndicesParameter.cxx)
+  target_include_directories(viewerparameters SYSTEM PUBLIC ${FLTK_INCLUDE_DIR})
+  target_link_libraries(viewerparameters rfbclient rfb network rdr core
+                        ${FLTK_LIBRARIES} ${Intl_LIBRARIES}
+                        GTest::gtest_main)
+  if(WIN32)
+    target_link_libraries(viewerparameters advapi32)
+  endif()
+  gtest_discover_tests(viewerparameters)
+endif()
+
 add_executable(emulatemb emulatemb.cxx ../../vncviewer/EmulateMB.cxx)
 target_link_libraries(emulatemb core GTest::gtest_main)
 gtest_discover_tests(emulatemb)

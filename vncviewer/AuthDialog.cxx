@@ -49,7 +49,8 @@
 static Fl_Pixmap secure_icon(secure);
 static Fl_Pixmap insecure_icon(insecure);
 
-AuthDialog::AuthDialog(bool secure_, bool needsUser, bool needsPassword)
+AuthDialog::AuthDialog(bool secure_, bool needsUser, bool needsPassword,
+                       bool allowPasswordStorage)
   : Fl_Window(410, 0, _("VNC authentication"))
 {
   int x, y;
@@ -104,11 +105,20 @@ AuthDialog::AuthDialog(bool secure_, bool needsUser, bool needsPassword)
     passwd->align(FL_ALIGN_LEFT | FL_ALIGN_TOP);
     y += INPUT_HEIGHT + INNER_MARGIN;
 
-    if (reconnectOnError) {
+#ifdef WIN32
+    bool offerKeepPassword = allowPasswordStorage;
+    const char* keepPasswordLabel = _("Remember password on this device");
+#else
+    (void)allowPasswordStorage;
+    bool offerKeepPassword = reconnectOnError;
+    const char* keepPasswordLabel = _("Keep password for reconnect");
+#endif
+
+    if (offerKeepPassword) {
       keepPasswdCheckbox = new Fl_Check_Button(LBLRIGHT(x, y,
                                                         CHECK_MIN_WIDTH,
                                                         CHECK_HEIGHT,
-                                                        _("Keep password for reconnect")));
+                                                        keepPasswordLabel));
       y += CHECK_HEIGHT + INNER_MARGIN;
     } else {
       keepPasswdCheckbox = nullptr;

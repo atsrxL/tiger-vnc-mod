@@ -197,6 +197,11 @@ Start in full-screen mode.
 Scale the remote desktop up to fit the local monitor when in full-screen mode.
 .
 .TP
+.B \-WindowedScaleToFit
+Scale the remote desktop down to fit the viewer window, preserving its aspect
+ratio and avoiding scroll bars.
+.
+.TP
 .B \-FullScreenAllMonitors (DEPRECATED)
 Use all local monitors and not just the current one when switching to
 full-screen mode. Replaced by \fB-FullScreenMode=all\fP

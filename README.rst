@@ -29,6 +29,18 @@ events are mapped back to the original remote framebuffer coordinates, and the
 Windows offscreen drawing path uses scaled blits so the displayed image and
 mouse input region stay aligned.
 
+Windowed sessions can independently enable ``WindowedScaleToFit`` to shrink a
+remote desktop that is larger than the viewer window.  The aspect ratio is
+preserved, scroll bars are avoided, and a remote desktop is never enlarged in
+windowed mode.
+
+On Windows, viewer options and connection history are persisted under the
+current user's AppData directory (normally ``%APPDATA%\TigerVNC``).  Existing
+registry settings are imported as a read-only compatibility fallback.  A
+password accepted with ``Remember password on this device`` is encrypted with
+Windows DPAPI before it is written below the same AppData directory.  Use
+``Forget saved password`` in the connection dialog to remove it.
+
 
 Legal
 =====

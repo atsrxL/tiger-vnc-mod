@@ -50,6 +50,7 @@
 #include "fltk/layout.h"
 #include "fltk/util.h"
 #include "Viewport.h"
+#include "ViewportGeometry.h"
 #include "CConn.h"
 #include "OptionsDialog.h"
 #include "DesktopWindow.h"
@@ -238,12 +239,9 @@ int Viewport::framebufferHeight() const
 
 core::Point Viewport::remoteToLocal(const core::Point& pos) const
 {
-  core::Point local;
-
-  local.x = pos.x * displayWidth / frameBuffer->width();
-  local.y = pos.y * displayHeight / frameBuffer->height();
-
-  return local;
+  return viewportgeometry::remoteToLocal(
+    pos, frameBuffer->width(), frameBuffer->height(),
+    displayWidth, displayHeight);
 }
 
 static const char * dotcursor_xpm[] = {
@@ -1074,7 +1072,7 @@ void Viewport::popupContextMenu()
   case ID_RESIZE:
     if (window()->fullscreen_active())
       break;
-    window()->size(w(), h());
+    window()->size(framebufferWidth(), framebufferHeight());
     break;
   case ID_CTRL:
     if (m->value())
@@ -1132,19 +1130,7 @@ void Viewport::handleOptions(void *data)
 
 core::Point Viewport::localToRemote(const core::Point& pos) const
 {
-  core::Point remote;
-
-  remote.x = pos.x * frameBuffer->width() / displayWidth;
-  remote.y = pos.y * frameBuffer->height() / displayHeight;
-
-  if (remote.x < 0)
-    remote.x = 0;
-  if (remote.y < 0)
-    remote.y = 0;
-  if (remote.x >= frameBuffer->width())
-    remote.x = frameBuffer->width() - 1;
-  if (remote.y >= frameBuffer->height())
-    remote.y = frameBuffer->height() - 1;
-
-  return remote;
+  return viewportgeometry::localToRemote(
+    pos, frameBuffer->width(), frameBuffer->height(),
+    displayWidth, displayHeight);
 }
