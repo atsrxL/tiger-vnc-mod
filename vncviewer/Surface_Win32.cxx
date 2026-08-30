@@ -88,7 +88,11 @@ void Surface::drawScaled(int src_x, int src_y, int src_w, int src_h,
   if (!SelectObject(dc, bitmap))
     throw core::win32_error("SelectObject", GetLastError());
 
-  SetStretchBltMode(fl_gc, COLORONCOLOR);
+  // COLORONCOLOR duplicates or drops whole pixels, which produces obvious
+  // stair-stepping at non-integer scale factors. HALFTONE trades a little
+  // sharpness for proper interpolation and is the highest-quality GDI mode.
+  SetStretchBltMode(fl_gc, HALFTONE);
+  SetBrushOrgEx(fl_gc, 0, 0, nullptr);
   if (!StretchBlt(fl_gc, dst_x, dst_y, dst_w, dst_h,
                   dc, src_x, src_y, src_w, src_h, SRCCOPY)) {
     if (GetLastError() != ERROR_INVALID_HANDLE)
@@ -136,7 +140,8 @@ void Surface::drawScaled(Surface* dst, int src_x, int src_y,
   if (!SelectObject(srcdc, bitmap))
     throw core::win32_error("SelectObject", GetLastError());
 
-  SetStretchBltMode(dstdc, COLORONCOLOR);
+  SetStretchBltMode(dstdc, HALFTONE);
+  SetBrushOrgEx(dstdc, 0, 0, nullptr);
   if (!StretchBlt(dstdc, dst_x, dst_y, dst_w, dst_h,
                   srcdc, src_x, src_y, src_w, src_h, SRCCOPY)) {
     if (GetLastError() != ERROR_INVALID_HANDLE)
@@ -265,4 +270,3 @@ void Surface::update(const Fl_RGB_Image* image)
       in += image->ld() - image->w() * image->d();
   }
 }
-
