@@ -221,6 +221,13 @@ void H264WinDecoderContext::decode(const uint8_t* h264_buffer,
         output_type = nullptr;
       }
 
+      if (output_type == nullptr)
+      {
+        // The decoder offered no NV12 output type at all. Retrying cannot
+        // change that, and the code below would dereference nullptr.
+        break;
+      }
+
       // reinitialize output type (NV12) that now has correct properties (width/height/framerate)
       decoder->SetOutputType(0, output_type, 0);
 
@@ -321,6 +328,13 @@ void H264WinDecoderContext::decode(const uint8_t* h264_buffer,
   // we ignore previous images if decoded multiple in a row
   if (decoded)
   {
+    if (converted_buffer == nullptr)
+    {
+      // Allocating the converter's output buffer failed above, so there is
+      // nowhere to convert into. Wait for the next stream change.
+      return;
+    }
+
     if (FAILED(converter->ProcessInput(0, decoded_sample, 0)))
     {
       // Silently ignore errors, hoping its a temporary encoding glitch
